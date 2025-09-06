@@ -31,5 +31,4 @@ func (chat *Chat) Chat(c *gin.Context) {
 	}
 	res, err := chat.app.Chat(c, &dto)
 	chat.RenderJSONResponse(c, http.StatusOK, res, err)
-	return
 }

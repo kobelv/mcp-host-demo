@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/baidubce/bce-qianfan-sdk/go/qianfan"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 
@@ -30,7 +31,7 @@ func NewChatAdapter(log logit.LoggerInterface) adapter.ChatAdapter {
 	return &ChatAdapterImpl{logger: log}
 }
 
-func (chat *ChatAdapterImpl) InvokeFunctionCallArk(ctx context.Context, qry string, functions []qianfan.Function) (*qianfan.FunctionCall, error) {
+func (chat *ChatAdapterImpl) InvokeFunctionCallArk(ctx context.Context, qry string, mcpTools []mcp.Tool) (*qianfan.FunctionCall, error) {
 	apiKey := os.Getenv("ARK_API_KEY")
 	if apiKey == "" {
 		fmt.Println("错误：请设置 ARK_API_KEY 环境变量。")
@@ -50,23 +51,13 @@ func (chat *ChatAdapterImpl) InvokeFunctionCallArk(ctx context.Context, qry stri
 			},
 		},
 	}
-	tools := make([]*model.Tool, 0)
-	for _, v := range functions {
-		tools = append(tools, &model.Tool{
-			Type: model.ToolTypeFunction,
-			Function: &model.FunctionDefinition{
-				Name:        v.Name,
-				Description: v.Description,
-			},
-		})
-	}
 
 	req := model.CreateChatCompletionRequest{
-		Model:    "doubao-seed-1-6-flash-250715", // 替换为Model ID，请从文档获取 https://www.volcengine.com/docs/82379/1330310
+		Model:    "doubao-seed-1-6-flash-250715",
 		Messages: msg,
-		Tools:    tools,
+		Tools:    convertToolsToFunctionDefinitions(mcpTools),
 		Thinking: &model.Thinking{
-			Type: model.ThinkingTypeAuto, // 关闭深度思考能力
+			Type: model.ThinkingTypeAuto, // 动态关闭深度思考能力，缩短响应时间
 		},
 	}
 
@@ -74,10 +65,10 @@ func (chat *ChatAdapterImpl) InvokeFunctionCallArk(ctx context.Context, qry stri
 	resp, err := client.CreateChatCompletion(
 		ctx,
 		req,
-		arkruntime.WithCustomHeader(model.ClientRequestHeader, "my-request-id-a1b2c3"), // 自定义请求头
+		arkruntime.WithCustomHeader(model.ClientRequestHeader, "my-request-id-kobelv"), // 自定义请求头
 	)
 	if err != nil {
-		fmt.Printf("standard chat error: %v", err)
+		fmt.Printf("chat error: %v", err)
 		return nil, err
 	}
 
@@ -91,7 +82,9 @@ func (chat *ChatAdapterImpl) InvokeFunctionCallArk(ctx context.Context, qry stri
 	// 展示模型中间过程的回复内容 (如果存在)
 	if respMsg.Content.StringValue != nil && *respMsg.Content.StringValue != "" {
 		fmt.Println("llm reply:", *respMsg.Content.StringValue)
-		return nil, errors.New("-1")
+		if len(respMsg.ToolCalls) == 0 {
+			return nil, errors.New("-1")
+		}
 	}
 
 	if resp.Choices[0].FinishReason != model.FinishReasonToolCalls || len(respMsg.ToolCalls) == 0 {
@@ -108,9 +101,45 @@ func (chat *ChatAdapterImpl) InvokeFunctionCallArk(ctx context.Context, qry stri
 	return nil, nil
 }
 
+func convertToolsToFunctionDefinitions(mcpTools []mcp.Tool) []*model.Tool {
+	var arkTools []*model.Tool
+
+	for _, tool := range mcpTools {
+		arkTool := &model.Tool{
+			Type: "function",
+			Function: &model.FunctionDefinition{
+				Name:        tool.Name,
+				Description: tool.Description,
+			},
+		}
+
+		arkTool.Function.Parameters = convertParameters(tool.InputSchema)
+
+		arkTools = append(arkTools, arkTool)
+	}
+
+	return arkTools
+}
+
+func convertParameters(schema mcp.ToolInputSchema) map[string]interface{} {
+	params := map[string]interface{}{
+		"type":       "object",
+		"properties": make(map[string]interface{}),
+	}
+
+	if len(schema.Required) > 0 {
+		params["required"] = schema.Required
+	}
+	if len(schema.Properties) > 0 {
+		params["properties"] = schema.Properties
+	}
+
+	return params
+}
+
 func (chat *ChatAdapterImpl) InvokeFunctionCall(ctx context.Context, qry string, functions []qianfan.Function) (*qianfan.FunctionCall, error) {
-	qianfan.GetConfig().AccessKey = "PwohSMMMbgjO2CLQ4jMYy1MY"
-	qianfan.GetConfig().SecretKey = "K6FM61SkrXQ2AGa8niSTG9sr535qbTNn"
+	qianfan.GetConfig().AccessKey = "tbd"
+	qianfan.GetConfig().SecretKey = "tbd"
 	llm := qianfan.NewChatCompletion(qianfan.WithModel("ERNIE-4.0-Turbo-8K"))
 	msg := []qianfan.ChatCompletionMessage{
 		qianfan.ChatCompletionUserMessage(qry),
@@ -125,7 +154,7 @@ func (chat *ChatAdapterImpl) InvokeFunctionCall(ctx context.Context, qry string,
 			Functions: functions,
 		})
 	if err != nil {
-		chat.logger.Warn(ctx, "failed to call function call: "+err.Error())
+		chat.logger.Warn(ctx, "failed to invoke function call: "+err.Error())
 		return nil, err
 	}
 

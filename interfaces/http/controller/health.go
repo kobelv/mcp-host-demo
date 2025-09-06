@@ -24,7 +24,6 @@ func NewHealth(
 
 func (h *Health) Liveness(c *gin.Context) {
 	h.RenderJSONResponse(c, http.StatusOK, nil, nil)
-	return
 }
 
 func (h *Health) Readiness(c *gin.Context) {
@@ -33,5 +32,4 @@ func (h *Health) Readiness(c *gin.Context) {
 		return
 	}
 	h.RenderJSONResponse(c, http.StatusOK, nil, nil)
-	return
 }

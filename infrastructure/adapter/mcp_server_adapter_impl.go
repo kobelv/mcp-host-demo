@@ -22,17 +22,16 @@ type McpServerAdapterImpl struct {
 }
 
 func NewMcpServerAdapter(ctx context.Context, log logit.LoggerInterface) adapter.McpServerAdapter {
-	sse, err := transport.NewSSE("http://10.12.214.141:8088/sse")
+	shttp, err := transport.NewStreamableHTTP("http://127.0.0.1:8080/mcp")
 	if err != nil {
-		fmt.Printf("failed to create SSE %v\n", err)
+		fmt.Printf("failed to create streamable HTTP %v\n", err)
 	}
 
-	if err := sse.Start(ctx); err != nil {
-		fmt.Printf("failed to start SSE %v\n", err)
+	if err := shttp.Start(ctx); err != nil {
+		fmt.Printf("failed to start streamable HTTP %v\n", err)
 	}
 
-	c := client.NewClient(sse)
-	// defer c.Close()
+	c := client.NewClient(shttp)
 
 	req := mcp.InitializeRequest{}
 	req.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
@@ -42,7 +41,7 @@ func NewMcpServerAdapter(ctx context.Context, log logit.LoggerInterface) adapter
 	}
 	req.Params.Capabilities = mcp.ClientCapabilities{}
 	serverInfo, err := c.Initialize(ctx, req)
-	if err != nil {
+	if err != nil || serverInfo == nil {
 		fmt.Printf("failed to init client %v\n", err)
 	}
 	fmt.Printf("connected to server: %s, version is %s\n", serverInfo.ServerInfo.Name, serverInfo.ServerInfo.Version)
@@ -74,29 +73,34 @@ func (adapter *McpServerAdapterImpl) InvokeMcpTool(ctx context.Context, fcRes *q
 	if fcRes == nil {
 		return nil, nil
 	}
-	if fcRes.Name != "greet" {
+	if fcRes.Name != "hello_world" && fcRes.Arguments != "get_current_date" {
 		return nil, errors.New("this tool is not supported yet")
 	}
 
 	arg := make(map[string]any)
 	json.Unmarshal([]byte(fcRes.Arguments), &arg)
 
-	callToolRequest := mcp.CallToolRequest{
-		Params: struct {
-			Name      string    `json:"name"`
-			Arguments any       `json:"arguments,omitempty"`
-			Meta      *mcp.Meta `json:"_meta,omitempty"`
-		}{
-			Name: fcRes.Name,
-			Arguments: map[string]any{
-				"name": arg["name"].(string),
-			},
-		},
+	callToolRequest := mcp.CallToolRequest{}
+	params := mcp.CallToolParams{}
+	params.Name = fcRes.Name
+	params.Arguments = map[string]any{}
+	var greet_name, greet_message string
+	if fcRes.Name == "hello_world" {
+		if _, exists := arg["greet_name"]; exists {
+			greet_name = arg["greet_name"].(string)
+		}
+		if _, exists := arg["greet_message"]; exists {
+			greet_message = arg["greet_message"].(string)
+		}
+		params.Arguments = map[string]any{
+			"greet_name":    greet_name,
+			"greet_message": greet_message,
+		}
 	}
-
+	callToolRequest.Params = params
 	result, err := adapter.c.CallTool(ctx, callToolRequest)
 	if err != nil {
-		fmt.Printf("failed to invoke tool %v\n", err)
+		fmt.Printf("failed to invoke tool call %s, %v\n", fcRes.Name, err)
 		return nil, err
 	}
 
